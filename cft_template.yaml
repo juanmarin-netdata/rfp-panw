@@ -1,0 +1,312 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+    Description: "Latest Amazon Linux 2 AMI ID"
+
+Resources:
+  # VPC
+  MyVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: vpc-rfp-panw
+        - Key: Project
+          Value: RFP_PANW
+
+  MyInternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: igw-rfp-panw
+        - Key: Project
+          Value: RFP_PANW
+
+  AttachGateway:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref MyInternetGateway
+
+  MySubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: '10.0.1.0/24'
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: subnet-1-rfp-panw
+        - Key: Project
+          Value: RFP_PANW
+
+  MySubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: '10.0.2.0/24'
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: subnet-2-rfp-panw
+        - Key: Project
+          Value: RFP_PANW
+
+  MyRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: route-table-rfp-panw
+        - Key: Project
+          Value: RFP_PANW
+
+  PublicRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref MyRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref MyInternetGateway
+
+  SubnetRouteTableAssociation1:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref MySubnet1
+      RouteTableId: !Ref MyRouteTable
+
+  SubnetRouteTableAssociation2:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref MySubnet2
+      RouteTableId: !Ref MyRouteTable
+
+  # Security Group allowing all traffic on SSH port (22)
+  SSHAccessSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Allow SSH access on port 22
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: sg-ssh-access
+        - Key: Project
+          Value: RFP_PANW
+
+  # Security Group allowing all traffic on RDP port (3389)
+  RDPAccessSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Allow RDP access on port 3389
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: sg-rdp-access
+        - Key: Project
+          Value: RFP_PANW
+
+  # EC2 Instance with IAM Write Permissions
+  EC2InstanceWithIAMWritePermissions:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: 't2.micro'
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !Ref MySubnet1
+      SecurityGroupIds:
+        - !Ref SSHAccessSecurityGroup
+      Tags:
+        - Key: Name
+          Value: EC2Instance-RFP_PANW
+        - Key: Project
+          Value: RFP_PANW
+
+  EC2InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref IAMRole
+
+  IAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: IAMWritePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'iam:Put*'
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: RFP_PANW
+
+  # Users and Machine Identities with Administrative Permissions
+  AdminUser:
+    Type: 'AWS::IAM::User'
+    Properties:
+      UserName: AdminUser
+      Tags:
+        - Key: Project
+          Value: RFP_PANW
+
+  AdminAccessPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: AdminAccessPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: '*'
+            Resource: '*'
+      Users:
+        - !Ref AdminUser
+
+  # Role with High Privileges Can Be Assumed by a Service in an External Account
+  HighPrivilegeRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::423154583131:root'  # External account
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: HighPrivilegePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: RFP_PANW
+
+  # EC2 Instance Not Configured with Instance Metadata Service v2 (IMDSv2)
+  EC2InstanceWithoutIMDSv2:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: 't2.micro'
+      SubnetId: !Ref MySubnet1
+      SecurityGroupIds:
+        - !Ref SSHAccessSecurityGroup
+      Tags:
+        - Key: Project
+          Value: RFP_PANW
+
+  # S3 bucket accessible to public without ACL
+  PublicS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: s3-bucket-rfp-panw
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: Project
+          Value: RFP_PANW
+
+  PublicBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref PublicS3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource: !Sub "arn:aws:s3:::${PublicS3Bucket}/*"
+
+  # KMS key with rotation enabled
+  MyKMSKey:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: "KMS key for project RFP_PANW"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: "Enable IAM User Permissions"
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+      Tags:
+        - Key: Project
+          Value: RFP_PANW
+
+  MyKMSKeyAlias:
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: alias/rfp-panw-key
+      TargetKeyId: !Ref MyKMSKey
+
+  # EKS cluster with public endpoint
+  EKSClusterRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSServicePolicy
+      Tags:
+        - Key: Project
+          Value: RFP_PANW
+
+  EKSCluster:
+    Type: 'AWS::EKS::Cluster'
+    Properties:
+      Name: eks-cluster-rfp-panw
+      Version: "1.27"
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds:
+          - !Ref MySubnet1
+          - !Ref MySubnet2
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: false
+      Tags:
+        - Key: Project
+          Value: RFP_PANW
