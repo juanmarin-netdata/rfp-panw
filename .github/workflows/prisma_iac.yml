@@ -1,6 +1,4 @@
-# Hellooo
-
-name: Prisma Cloud IaC Scan
+name: Prisma Cloud IaC Scan - rfp
 
 on:
   push:
