@@ -5,7 +5,7 @@ Resources:
     Properties:
       BucketName: s3-bucket-rfp-panw
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
+        BlockPublicAcls: true
         IgnorePublicAcls: false
         BlockPublicPolicy: false
         RestrictPublicBuckets: false
